@@ -33,6 +33,7 @@ static struct pkt buffer[WINDOWSIZE];
 static int windowfirst, windowlast;
 static int windowcount;
 static int A_nextseqnum;
+extern int packets_resent;
 
 void A_output(struct msg message)
 {
@@ -100,10 +101,15 @@ void A_input(struct pkt packet)
         
         
         if (ackcount == 0) {
-          if (TRACE > 0)
-            printf("----A: ACK %d not found in window, possibly already processed\n", packet.acknum);
-          return;
-        }
+          if (packet.acknum == buffer[windowfirst].seqnum) {
+            ackcount = 1; 
+          } else {
+            if (TRACE > 0)
+              printf("----A: ACK %d not found in window, possibly already processed\n", packet.acknum);
+            return;
+           }
+          }
+
 
         windowfirst = (windowfirst + ackcount) % WINDOWSIZE;
 
@@ -143,14 +149,16 @@ void A_timerinterrupt(void)
       printf("----A: Resending packet %d\n", buffer[index].seqnum);
 
     tolayer3(A, buffer[index]);
+    packets_resent++;
     index = (index + 1) % WINDOWSIZE;
   }
-
   starttimer(A, RTT);
 
   if (TRACE > 1)
     printf("----A: Timer restarted after retransmission\n");
 }
+
+
 
 void A_init(void)
 {
