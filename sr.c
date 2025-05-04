@@ -120,32 +120,26 @@ void A_input(struct pkt packet)
 void A_timerinterrupt(void)
 {
   int i;
-  int index = windowfirst;
 
-  if (windowcount == 0) {
-    if (TRACE > 0)
-      printf("----A: Timer interrupt but window is empty, nothing to resend.\n");
-    return;
+  
+  for (i = 0; i < windowcount; i++) {
+    int index = (windowfirst + i) % WINDOWSIZE;
+    if (!acked[index]) {
+      if (TRACE > 0)
+        printf("----A: Timeout occurred, retransmitting packet %d\n", buffer[index].seqnum);
+
+      tolayer3(A, buffer[index]);
+      packets_resent++;
+
+      starttimer(A, RTT);  
+      return;
+    }
   }
 
   if (TRACE > 0)
-    printf("----A: Timeout occurred, retransmitting all packets in window\n");
-
-  for (i = 0; i < windowcount; i++) {
-    if (!acked[index]) {
-      if (TRACE > 1)
-        printf("----A: Resending packet %d\n", buffer[index].seqnum);
-
-    tolayer3(A, buffer[index]);
-      packets_resent++;
-    }
-    index = (index + 1) % WINDOWSIZE;
+    printf("----A: Timer interrupt but no unACKed packets found\n");
 }
-  starttimer(A, RTT);
 
-  if (TRACE > 1)
-    printf("----A: Timer restarted after retransmission\n");
-}
 
 
 
