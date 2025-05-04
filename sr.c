@@ -85,7 +85,7 @@ void A_input(struct pkt packet)
 
     index = windowfirst;
     for (i = 0; i < windowcount; i++) {
-      if (buffer[index].seqnum == packet.acknum) {
+      if ((buffer[index].seqnum == packet.acknum) && (!acked[index])) {
         if (!acked[index]) {
           if (TRACE > 0)
             printf("----A: ACK %d is not a duplicate\n", packet.acknum);
@@ -121,22 +121,22 @@ void A_timerinterrupt(void)
 {
   int i;
 
-  
+  bool any_unacked = false;
   for (i = 0; i < windowcount; i++) {
     int index = (windowfirst + i) % WINDOWSIZE;
     if (!acked[index]) {
-      if (TRACE > 0){
-        printf("----A: time out,resend packets!\n");
-        printf("---A: resending packet %d\n", buffer[index].seqnum);
-        }
-
+     if (TRACE > 0) {
+       printf("----A: time out,resend packets!\n");
+       printf("---A: resending packet %d\n", buffer[index].seqnum);
+      }
       tolayer3(A, buffer[index]);
       packets_resent++;
-
-      starttimer(A, RTT);  
-      return;
-    }
-  }
+      any_unacked = true;
+   }
+ }
+ if (any_unacked) {
+   starttimer(A, RTT);
+ }
 
   if (TRACE > 0)
     printf("----A: Timer interrupt but no unACKed packets found\n");
