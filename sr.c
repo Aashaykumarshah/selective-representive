@@ -125,8 +125,10 @@ void A_timerinterrupt(void)
   for (i = 0; i < windowcount; i++) {
     int index = (windowfirst + i) % WINDOWSIZE;
     if (!acked[index]) {
-      if (TRACE > 0)
-        printf("----A: Timeout occurred, retransmitting packet %d\n", buffer[index].seqnum);
+      if (TRACE > 0){
+        printf("----A: time out,resend packets!\n");
+        printf("---A: resending packet %d\n", buffer[index].seqnum);
+        }
 
       tolayer3(A, buffer[index]);
       packets_resent++;
