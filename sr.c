@@ -74,7 +74,7 @@ void A_output(struct msg message)
 void A_input(struct pkt packet)
 {
   int i, index;
-  bool has_unacked = false;
+
   if (!IsCorrupted(packet)) {
     if (TRACE > 0)
       printf("----A: uncorrupted ACK %d is received\n", packet.acknum);
@@ -85,7 +85,7 @@ void A_input(struct pkt packet)
 
     index = windowfirst;
     for (i = 0; i < windowcount; i++) {
-      if ((buffer[index].seqnum == packet.acknum) && (!acked[index])) {
+      if (buffer[index].seqnum == packet.acknum) {
         if (!acked[index]) {
           if (TRACE > 0)
             printf("----A: ACK %d is not a duplicate\n", packet.acknum);
@@ -106,17 +106,10 @@ void A_input(struct pkt packet)
       windowfirst = (windowfirst + 1) % WINDOWSIZE;
       windowcount--;
     }
- 
+
     stoptimer(A);
-    
-    for (i = 0; i < windowcount; i++) {
-      if (!acked[(windowfirst + i) % WINDOWSIZE]) {
-        has_unacked = true;
-        break;
-       }
-      }
-      if (has_unacked)
-        starttimer(A, RTT);
+    if (windowcount > 0)
+      starttimer(A, RTT);
   } else {
     if (TRACE > 0)
       printf("----A: corrupted ACK is received, do nothing!\n");
@@ -128,25 +121,25 @@ void A_timerinterrupt(void)
 {
   int i;
 
-  bool any_unacked = false;
+  
   for (i = 0; i < windowcount; i++) {
     int index = (windowfirst + i) % WINDOWSIZE;
     if (!acked[index]) {
-     if (TRACE > 0) {
-       printf("----A: time out,resend packets!\n");
-       printf("---A: resending packet %d\n", buffer[index].seqnum);
-      }
+      if (TRACE > 0){
+        printf("----A: time out,resend packets!\n");
+        printf("---A: resending packet %d\n", buffer[index].seqnum);
+        }
+
       tolayer3(A, buffer[index]);
       packets_resent++;
-      any_unacked = true;
-   }
- }
- if (any_unacked) {
-   starttimer(A, RTT);
- }else{
+
+      starttimer(A, RTT);  
+      return;
+    }
+  }
+
   if (TRACE > 0)
     printf("----A: Timer interrupt but no unACKed packets found\n");
- } 
 }
 
 
