@@ -74,7 +74,7 @@ void A_output(struct msg message)
 void A_input(struct pkt packet)
 {
   int i, index;
-
+  bool has_unacked = false;
   if (!IsCorrupted(packet)) {
     if (TRACE > 0)
       printf("----A: uncorrupted ACK %d is received\n", packet.acknum);
@@ -106,10 +106,17 @@ void A_input(struct pkt packet)
       windowfirst = (windowfirst + 1) % WINDOWSIZE;
       windowcount--;
     }
-
+ 
     stoptimer(A);
-    if (windowcount > 0)
-      starttimer(A, RTT);
+    
+    for (i = 0; i < windowcount; i++) {
+      if (!acked[(windowfirst + i) % WINDOWSIZE]) {
+        has_unacked = true;
+        break;
+       }
+      }
+      if (has_unacked)
+        starttimer(A, RTT);
   } else {
     if (TRACE > 0)
       printf("----A: corrupted ACK is received, do nothing!\n");
@@ -136,10 +143,10 @@ void A_timerinterrupt(void)
  }
  if (any_unacked) {
    starttimer(A, RTT);
- }
-
+ }else{
   if (TRACE > 0)
     printf("----A: Timer interrupt but no unACKed packets found\n");
+ } 
 }
 
 
