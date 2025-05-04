@@ -34,11 +34,13 @@ static int windowfirst, windowlast;
 static int windowcount;
 static int A_nextseqnum;
 extern int packets_resent;
+static bool acked[WINDOWSIZE];
 
 void A_output(struct msg message)
 {
   struct pkt sendpkt;
   int i;
+  
 
   if (windowcount < WINDOWSIZE) {
     if (TRACE > 1)
@@ -52,6 +54,7 @@ void A_output(struct msg message)
 
     windowlast = (windowfirst + windowcount) % WINDOWSIZE;
     buffer[windowlast] = sendpkt;
+    acked[windowlast] = false;
     windowcount++;
 
     if (TRACE > 0)
@@ -69,9 +72,9 @@ void A_output(struct msg message)
   }
 }
 
+
 void A_input(struct pkt packet)
 {
-  int ackcount = 0;
   int i;
   int index = windowfirst;
 
@@ -81,54 +84,39 @@ void A_input(struct pkt packet)
     total_ACKs_received++;
 
     if (windowcount != 0) {
-      int seqfirst = buffer[windowfirst].seqnum;
-      int seqlast = buffer[windowlast].seqnum;
-
-      if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
-          ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
-
-        if (TRACE > 0)
-          printf("----A: ACK %d is not a duplicate\n", packet.acknum);
-        new_ACKs++;
-
-        for (i = 0; i < windowcount; i++) {
-          if (buffer[index].seqnum == packet.acknum) {
-            ackcount = i + 1;
-            break;
-          }
-          index = (index + 1) % WINDOWSIZE;
-        }
-        
-        
-        if (ackcount == 0) {
-          if (packet.acknum == buffer[windowfirst].seqnum) {
-            ackcount = 1; 
-          } else {
+      for (i = 0; i < windowcount; i++) {
+        if (buffer[index].seqnum == packet.acknum) {
+          if (!acked[index]) {
             if (TRACE > 0)
-              printf("----A: ACK %d not found in window, possibly already processed\n", packet.acknum);
-            return;
-           }
+              printf("----A: ACK %d is not a duplicate\n", packet.acknum);
+            acked[index] = true;
+            new_ACKs++;
           }
 
+          /* Slide window forward while base is ACKed */
+          while (windowcount > 0 && acked[windowfirst]) {
+            acked[windowfirst] = false;
+            windowfirst = (windowfirst + 1) % WINDOWSIZE;
+            windowcount--;
+          }
 
-        windowfirst = (windowfirst + ackcount) % WINDOWSIZE;
-
-        for (i = 0; i < ackcount; i++)
-          windowcount--;
-
-        stoptimer(A);
-        if (windowcount > 0)
-          starttimer(A, RTT);
-      } else {
-        if (TRACE > 0)
-          printf("----A: duplicate ACK received, do nothing!\n");
+          stoptimer(A);
+          if (windowcount > 0)
+            starttimer(A, RTT);
+          return;
+        }
+        index = (index + 1) % WINDOWSIZE;
       }
+
+      if (TRACE > 0)
+        printf("----A: ACK %d not found in window, possibly already processed\n", packet.acknum);
     }
   } else {
     if (TRACE > 0)
       printf("----A: corrupted ACK is received, do nothing!\n");
   }
 }
+
 
 void A_timerinterrupt(void)
 {
@@ -145,11 +133,12 @@ void A_timerinterrupt(void)
     printf("----A: Timeout occurred, retransmitting all packets in window\n");
 
   for (i = 0; i < windowcount; i++) {
-    if (TRACE > 1)
-      printf("----A: Resending packet %d\n", buffer[index].seqnum);
-
-    tolayer3(A, buffer[index]);
-    packets_resent++;
+    if (!acked[index]) {
+      if (TRACE > 1)
+        printf("----A: Resending packet %d\n", buffer[index].seqnum);
+      tolayer3(A, buffer[index]);
+      packets_resent++;
+    }
     index = (index + 1) % WINDOWSIZE;
   }
   starttimer(A, RTT);
@@ -162,31 +151,44 @@ void A_timerinterrupt(void)
 
 void A_init(void)
 {
+  int i;
   A_nextseqnum = 0;
   windowfirst = 0;
   windowlast = -1;
   windowcount = 0;
+  for (i = 0; i < WINDOWSIZE; i++) {
+    acked[i] = false;
+  }
 }
-
 /********* Receiver (B)  variables and procedures ************/
 
 static int expectedseqnum;
 static int B_nextseqnum;
-
+#define RCV_BUFFER_SIZE SEQSPACE
+static struct pkt recv_buffer[RCV_BUFFER_SIZE];
+static bool recv_flags[RCV_BUFFER_SIZE];
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
   int i;
 
-  if ((!IsCorrupted(packet)) && (packet.seqnum == expectedseqnum)) {
-    if (TRACE > 0)
-      printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
-    packets_received++;
+  if (!IsCorrupted(packet)) {
+    int seq = packet.seqnum;
 
-    tolayer5(B, packet.payload);
+    if (!recv_flags[seq]) {
+      recv_buffer[seq] = packet;
+      recv_flags[seq] = true;
+    }
 
-    sendpkt.acknum = expectedseqnum;
-    expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
+    /* Deliver in-order packets to application */
+    while (recv_flags[expectedseqnum]) {
+      tolayer5(B, recv_buffer[expectedseqnum].payload);
+      recv_flags[expectedseqnum] = false;
+      packets_received++;
+      expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
+    }
+
+    sendpkt.acknum = seq;  /* always ACK the received packet */
   } else {
     if (TRACE > 0)
       printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
@@ -207,10 +209,15 @@ void B_input(struct pkt packet)
   tolayer3(B, sendpkt);
 }
 
+
 void B_init(void)
 {
+  int i;
   expectedseqnum = 0;
   B_nextseqnum = 1;
+  for (i = 0; i < RCV_BUFFER_SIZE; i++) {
+    recv_flags[i] = false;
+  }
 }
 
 void B_output(struct msg message)
